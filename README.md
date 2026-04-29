@@ -25,30 +25,6 @@ Each question is scored as K independent (question, choice_i) pairs, so the mode
 
 The cross-modal variant exposes per-region attention weights [B×K, heads, 7, 7] that are used for visualisation in `solution.ipynb`.
 
-## Project structure
-
-```
-├── config.py
-├── download_data.py
-├── inspect_parquet.py
-├── train.py
-├── solution.ipynb          visualisations + submission CSV
-├── requirements.txt
-├── data/
-│   ├── dataset.py
-│   └── raw/                parquet files (gitignored)
-├── models/
-│   ├── vision_encoder.py
-│   ├── text_encoder.py
-│   ├── fusion.py
-│   └── vqa_model.py
-├── visualize/
-│   ├── gradcam.py
-│   └── feature_space.py
-├── checkpoints/            (gitignored)
-└── outputs/                (gitignored)
-```
-
 ## Setup
 
 ```bash
@@ -74,11 +50,6 @@ Copy the three files into `data/raw/`:
 scienceQA_train.parquet
 scienceQA_val.parquet
 scienceQA_test_set.parquet
-```
-
-Verify the schema once before training:
-```bash
-python inspect_parquet.py
 ```
 
 ## Training
