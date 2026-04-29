@@ -29,24 +29,24 @@ The cross-modal variant exposes per-region attention weights [B×K, heads, 7, 7]
 
 ```
 ├── config.py
-├── download_data.py        download competition files from Kaggle
-├── inspect_parquet.py      schema verification (run once after download)
-├── train.py                train one fusion variant
-├── solution.ipynb          post-training: visualisations + submission CSV
+├── download_data.py
+├── inspect_parquet.py
+├── train.py
+├── solution.ipynb          visualisations + submission CSV
 ├── requirements.txt
 ├── data/
 │   ├── dataset.py
 │   └── raw/                parquet files (gitignored)
 ├── models/
-│   ├── vision_encoder.py   ResNet-50 with GradCAM hooks
-│   ├── text_encoder.py     DistilBERT
-│   ├── fusion.py           EarlyFusion, LateFusion, CrossModalFusion
+│   ├── vision_encoder.py
+│   ├── text_encoder.py
+│   ├── fusion.py
 │   └── vqa_model.py
 ├── visualize/
-│   ├── gradcam.py          GradCAM + question-conditioned attention
-│   └── feature_space.py    cosine similarity + UMAP
-├── checkpoints/            saved by train.py (gitignored)
-└── outputs/                plots, JSON, submission CSV (gitignored)
+│   ├── gradcam.py
+│   └── feature_space.py
+├── checkpoints/            (gitignored)
+└── outputs/                (gitignored)
 ```
 
 ## Setup
@@ -91,11 +91,4 @@ python train.py --fusion cross_modal
 
 ## Results and submission
 
-Open `solution.ipynb` and run all cells. It will:
-
-1. Load all three trained models
-2. Report validation accuracy per variant and per subject
-3. Produce GradCAM visualisations (saved to `outputs/`)
-4. Show question-conditioned attention shift for the cross-modal model
-5. Run cosine similarity and UMAP analysis of the feature spaces
-6. Select the best-performing variant and write `outputs/submission.csv`
+Open `solution.ipynb` and run all cells.  It loads all three trained models, produces GradCAM and feature space visualisations, and writes `outputs/submission.csv` from the best-performing variant.

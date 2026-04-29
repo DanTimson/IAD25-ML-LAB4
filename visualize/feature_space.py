@@ -120,7 +120,7 @@ def umap_joint(visual_embs, text_embs, subjects, n_max=1500, save_path=None):
     idx = np.random.choice(len(visual_embs), n, replace=False)
     v, t, subs = visual_embs[idx], text_embs[idx], [subjects[i] for i in idx]
 
-    print("Running UMAP …")
+    print("Running UMAP...")
     emb  = UMAP(n_components=2, n_neighbors=15, min_dist=0.1,
                 random_state=42).fit_transform(np.concatenate([v, t], axis=0))
     v2, t2 = emb[:n], emb[n:]
