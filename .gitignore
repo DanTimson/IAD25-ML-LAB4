@@ -1,21 +1,13 @@
-# Python
 __pycache__/
 *.py[cod]
 *.pyo
 .venv/
 *.egg-info/
 
-# Checkpoints and model outputs
 checkpoints/
 outputs/
 
-# Data — parquet files are large; don't commit them
 data/raw/
 
-# IDE
 .vscode/
 .idea/
-
-# OS
-.DS_Store
-Thumbs.db

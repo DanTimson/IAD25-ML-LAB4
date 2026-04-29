@@ -1,6 +1,6 @@
 # ScienceQA VQA
 
-Visual Question Answering on the [ScienceQA](https://scienceqa.github.io/) dataset using a two-leg CNN + text encoder architecture with three interchangeable fusion strategies.
+Visual Question Answering on the ScienceQA dataset using a two-leg CNN + text encoder architecture with three interchangeable fusion strategies.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ pip install -r requirements.txt
 
 **Option A — Kaggle download**
 
-Place `~/.kaggle/kaggle.json` (from https://www.kaggle.com/settings → API → Create New Token), then:
+Place `~/.kaggle/kaggle.json`, then:
 
 ```bash
 python download_data.py
