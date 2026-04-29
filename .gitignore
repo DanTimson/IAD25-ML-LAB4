@@ -5,22 +5,12 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# Checkpoints and outputs
+# Checkpoints and model outputs
 checkpoints/
 outputs/
 
-# HuggingFace cache
-~/.cache/huggingface/
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Data
+# Data — parquet files are large; don't commit them
 data/raw/
-*.csv
-*.json
-!requirements.txt
 
 # IDE
 .vscode/

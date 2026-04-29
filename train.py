@@ -1,10 +1,11 @@
 """
-train.py — train a VQA model for one fusion variant.
+train.py
 
 Usage:
     python train.py --fusion early
     python train.py --fusion late
     python train.py --fusion cross_modal
+    python train.py --fusion early --data_dir /path/to/parquets
 """
 
 import argparse
@@ -25,7 +26,6 @@ from data.dataset import ScienceQADataset
 from models.vqa_model import VQAModel
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -34,7 +34,6 @@ def set_seed(seed: int):
 
 
 def build_optimizer(model: VQAModel, config: Config) -> AdamW:
-    """Separate learning rates for pretrained backbones vs. new fusion layers."""
     backbone_params = (
         list(model.vision_encoder.parameters())
         + list(model.text_encoder.parameters())
@@ -49,7 +48,6 @@ def build_optimizer(model: VQAModel, config: Config) -> AdamW:
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 def train_one_epoch(model, loader, optimizer, scheduler, device, scaler, config):
     model.train()
     total_loss = 0.0
@@ -66,7 +64,6 @@ def train_one_epoch(model, loader, optimizer, scheduler, device, scaler, config)
         answer         = batch["answer"].to(device)
 
         optimizer.zero_grad()
-
         with torch.amp.autocast("cuda"):
             logits = model(image, input_ids, attention_mask, has_image, choice_mask)
             loss   = criterion(logits, answer)
@@ -106,20 +103,22 @@ def evaluate(model, loader, device):
     return n_correct / n_total
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-def main(fusion_type: str):
+def main(fusion_type: str, data_dir: str | None = None):
     config = Config(fusion_type=fusion_type)
-    set_seed(config.seed)
+    if data_dir:
+        config.data_dir = data_dir
 
+    set_seed(config.seed)
     os.makedirs(config.output_dir,     exist_ok=True)
     os.makedirs(config.checkpoint_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[train] device={device}  fusion={fusion_type}")
 
-    tokenizer  = AutoTokenizer.from_pretrained(config.text_model)
-    train_set  = ScienceQADataset("train",      config, tokenizer)
-    val_set    = ScienceQADataset("validation", config, tokenizer)
+    tokenizer = AutoTokenizer.from_pretrained(config.text_model)
+
+    train_set = ScienceQADataset(config.train_parquet, config, tokenizer, split="train")
+    val_set   = ScienceQADataset(config.val_parquet,   config, tokenizer, split="val")
 
     train_loader = DataLoader(
         train_set, batch_size=config.batch_size, shuffle=True,
@@ -152,7 +151,7 @@ def main(fusion_type: str):
         val_acc = evaluate(model, val_loader, device)
 
         row = {
-            "epoch":     epoch,
+            "epoch":      epoch,
             "train_loss": round(train_loss, 5),
             "train_acc":  round(train_acc,  4),
             "val_acc":    round(val_acc,     4),
@@ -169,7 +168,7 @@ def main(fusion_type: str):
                 "val_acc":     val_acc,
                 "config":      config.__dict__,
             }, ckpt_path)
-            print(f"  ✓ saved checkpoint → {ckpt_path}")
+            print(f"  ✓ checkpoint → {ckpt_path}")
 
     hist_path = os.path.join(config.output_dir, f"history_{fusion_type}.json")
     with open(hist_path, "w") as f:
@@ -179,14 +178,11 @@ def main(fusion_type: str):
     return best_val_acc
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--fusion",
-        choices=["early", "late", "cross_modal"],
-        default="early",
-        help="Fusion strategy to train",
-    )
+    parser.add_argument("--fusion", choices=["early", "late", "cross_modal"],
+                        default="early")
+    parser.add_argument("--data_dir", default=None,
+                        help="Override data directory (default: data/raw)")
     args = parser.parse_args()
-    main(args.fusion)
+    main(args.fusion, args.data_dir)

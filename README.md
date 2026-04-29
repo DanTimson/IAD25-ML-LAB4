@@ -1,6 +1,6 @@
-# ScienceQA VQA — Two-Leg CNN + Text Fusion
+# ScienceQA VQA
 
-Multi-modal multiple-choice VQA on the ScienceQA dataset.
+Visual Question Answering on the [ScienceQA](https://scienceqa.github.io/) dataset using a two-leg CNN + text encoder architecture with three interchangeable fusion strategies.
 
 ## Architecture
 
@@ -12,23 +12,73 @@ Image ──► ResNet-50 (layer4 → [B,2048,7,7]) ──► proj [B, D]
                                                └───────┬────────┘
 Text (Q + choice_i) ──► DistilBERT ──► CLS [B*K, D] ──┘
                                                │
-                                        logits [B, K]   → argmax → answer index
+                                        logits [B, K]  →  argmax  →  choice index
 ```
 
-Three fusion variants (swap via `--fusion`):
+Each question is scored as K independent (question, choice_i) pairs, so the model handles variable numbers of choices without a fixed output head. ~51% of samples have no image; a `has_image` gate zeroes out the visual contribution for text-only questions in all three fusion variants.
 
-| Variant        | How it works |
-|---------------|--------------|
-| `early`        | concat([vis, text]) → MLP → scalar per choice |
-| `late`         | separate MLP per modality, outputs summed via learned gate |
-| `cross_modal`  | multi-head attention: query=text CLS, key/value=spatial CNN tokens |
+| `--fusion`    | Mechanism |
+|--------------|-----------|
+| `early`       | concat([vis, text]) → MLP → scalar per choice |
+| `late`        | separate MLP per modality, combined via learned sigmoid gate |
+| `cross_modal` | multi-head attention: query = text CLS, key/value = ResNet spatial tokens |
 
-Vision backbone is always ResNet-50 (non-transformer). Text encoder is DistilBERT.
+The cross-modal variant exposes per-region attention weights [B×K, heads, 7, 7] that are used for visualisation in `solution.ipynb`.
+
+## Project structure
+
+```
+├── config.py
+├── download_data.py        download competition files from Kaggle
+├── inspect_parquet.py      schema verification (run once after download)
+├── train.py                train one fusion variant
+├── solution.ipynb          post-training: visualisations + submission CSV
+├── requirements.txt
+├── data/
+│   ├── dataset.py
+│   └── raw/                parquet files (gitignored)
+├── models/
+│   ├── vision_encoder.py   ResNet-50 with GradCAM hooks
+│   ├── text_encoder.py     DistilBERT
+│   ├── fusion.py           EarlyFusion, LateFusion, CrossModalFusion
+│   └── vqa_model.py
+├── visualize/
+│   ├── gradcam.py          GradCAM + question-conditioned attention
+│   └── feature_space.py    cosine similarity + UMAP
+├── checkpoints/            saved by train.py (gitignored)
+└── outputs/                plots, JSON, submission CSV (gitignored)
+```
 
 ## Setup
 
 ```bash
-pip install -r requirements.txt --break-system-packages
+python -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## Data
+
+**Option A — Kaggle download**
+
+Place `~/.kaggle/kaggle.json` (from https://www.kaggle.com/settings → API → Create New Token), then:
+
+```bash
+python download_data.py
+```
+
+**Option B — manual**
+
+Copy the three files into `data/raw/`:
+```
+scienceQA_train.parquet
+scienceQA_val.parquet
+scienceQA_test_set.parquet
+```
+
+Verify the schema once before training:
+```bash
+python inspect_parquet.py
 ```
 
 ## Training
@@ -39,57 +89,13 @@ python train.py --fusion late
 python train.py --fusion cross_modal
 ```
 
-Checkpoints are saved to `checkpoints/best_{fusion}.pt` when validation accuracy improves.
+## Results and submission
 
-## Evaluation & submission
+Open `solution.ipynb` and run all cells. It will:
 
-```bash
-# Generate test-set CSV for one variant
-python evaluate.py --fusion cross_modal
-
-# Compare all three variants on validation set
-python evaluate.py --compare
-```
-
-Submission format: `outputs/submission_{fusion}.csv`
-```
-ID,answer
-2,0
-5,2
-6,1
-```
-`answer` is the predicted choice index (0-indexed), matching ScienceQA's answer field.
-
-## Visualizations
-
-```python
-from visualize.gradcam import plot_gradcam_grid, plot_question_conditioned
-from visualize.feature_space import run_analysis
-
-# GradCAM for a list of validation samples
-from data.dataset import ScienceQADataset
-from transformers import AutoTokenizer
-from config import Config
-
-config    = Config(fusion_type="cross_modal")
-tokenizer = AutoTokenizer.from_pretrained(config.text_model)
-val_set   = ScienceQADataset("validation", config, tokenizer)
-samples   = [val_set[i] for i in range(10) if val_set.data[i]["image"] is not None]
-
-plot_gradcam_grid(model, samples, device, save_path="outputs/gradcam_grid.png")
-
-# Same image, different questions (question-conditioned attention shift)
-plot_question_conditioned(model, samples[0]["image"], [samples[0], samples[1]], device)
-
-# Feature space analysis
-run_analysis("cross_modal")
-```
-
-## Notes
-
-- ~51% of ScienceQA questions have no image. A `has_image` gate zeros out visual
-  contribution in all fusion variants when the image field is None.
-- GradCAM hooks are registered on `ResNetEncoder.layer4` and fire on every forward pass.
-  No model modification required to generate heatmaps post-training.
-- Cross-modal attention weights `[B*K, n_heads, 1, 49]` reshape to `[7, 7]` per head
-  and can be directly overlaid on the 224×224 input (each token = 32×32 px patch).
+1. Load all three trained models
+2. Report validation accuracy per variant and per subject
+3. Produce GradCAM visualisations (saved to `outputs/`)
+4. Show question-conditioned attention shift for the cross-modal model
+5. Run cosine similarity and UMAP analysis of the feature spaces
+6. Select the best-performing variant and write `outputs/submission.csv`

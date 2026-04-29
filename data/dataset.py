@@ -1,12 +1,14 @@
-import torch
-from torch.utils.data import Dataset
-import torchvision.transforms as T
-from datasets import load_dataset
-from PIL import Image
+import ast
+import io
+
 import numpy as np
+import pandas as pd
+import torch
+import torchvision.transforms as T
+from PIL import Image
+from torch.utils.data import Dataset
 
 
-# ImageNet normalisation stats
 _MEAN = [0.485, 0.456, 0.406]
 _STD  = [0.229, 0.224, 0.225]
 
@@ -21,62 +23,90 @@ def build_transform(image_size: int, train: bool) -> T.Compose:
             T.Normalize(_MEAN, _STD),
         ])
     return T.Compose([
-        T.Resize(int(image_size * 1.1)),
+        T.Resize(int(image_size * 1.14)),
         T.CenterCrop(image_size),
         T.ToTensor(),
         T.Normalize(_MEAN, _STD),
     ])
 
 
+def _decode_image(raw) -> Image.Image | None:
+    """Image column is dict{'bytes', 'path'} or None/NaN (text-only question)."""
+    if raw is None or isinstance(raw, float):
+        return None
+    if isinstance(raw, dict):
+        data = raw.get("bytes")
+        if not data:
+            return None
+        try:
+            return Image.open(io.BytesIO(data))
+        except Exception:
+            return None
+    return None
+
+
+def _parse_choices(raw) -> list[str]:
+    if isinstance(raw, (list, np.ndarray)):
+        return [str(c) for c in raw]
+    if isinstance(raw, str):
+        return [str(c) for c in ast.literal_eval(raw)]
+    raise ValueError(f"Unexpected choices type {type(raw)}: {raw!r}")
+
+
+def _build_text(question: str, choice: str, hint: str, lecture: str,
+                use_hint: bool, use_lecture: bool) -> str:
+    # Order: lecture -> hint -> question -> choice
+    # Tokenizer truncates from the right, so question and choice are preserved.
+    parts = []
+    if use_lecture and lecture:
+        parts.append(f"Context: {lecture}")
+    if use_hint and hint:
+        parts.append(f"Hint: {hint}")
+    parts.append(f"Question: {question}")
+    parts.append(f"Choice: {choice}")
+    return " ".join(parts)
+
+
 class ScienceQADataset(Dataset):
     """
-    Wraps the HuggingFace ScienceQA dataset.
-
-    Each item returns:
-      image         : [3, H, W] float tensor  (zeros if no image context)
-      has_image     : scalar float 0/1 — used by fusion modules to gate visual contribution
-      input_ids     : [max_choices, seq_len]  — one encoding per choice
-      attention_mask: [max_choices, seq_len]
-      choice_mask   : [max_choices]  — 1 for real choices, 0 for padding
-      answer        : scalar long     — correct choice index
-      task_id       : int             — original dataset id for submission file
+    Parquet-backed dataset for all three splits.
+    task_id is the 0-based row index for all splits (no dedicated ID column).
     """
 
-    def __init__(self, split: str, config, tokenizer):
-        self.config = config
-        self.tokenizer = tokenizer
-        self.transform = build_transform(config.image_size, train=(split == "train"))
+    def __init__(self, parquet_path: str, config, tokenizer, split: str):
+        assert split in ("train", "val", "test")
+        self.config     = config
+        self.tokenizer  = tokenizer
+        self.transform  = build_transform(config.image_size, train=(split == "train"))
         self.null_image = torch.zeros(3, config.image_size, config.image_size)
 
-        # HuggingFace split names: "train" | "validation" | "test"
-        self.data = load_dataset(config.dataset_name, split=split,
-                                 trust_remote_code=True)
+        self.df          = pd.read_parquet(parquet_path)
+        self._has_answer = "answer" in self.df.columns
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self.df)
 
     def __getitem__(self, idx: int) -> dict:
-        sample = self.data[idx]
+        row = self.df.iloc[idx]
 
-        # ---- image -------------------------------------------------------
-        raw_image = sample.get("image")
-        if raw_image is not None:
-            if not isinstance(raw_image, Image.Image):
-                raw_image = Image.fromarray(np.array(raw_image))
-            image = self.transform(raw_image.convert("RGB"))
+        pil = _decode_image(row["image"] if "image" in self.df.columns else None)
+        if pil is not None:
+            image     = self.transform(pil.convert("RGB"))
             has_image = torch.tensor(1.0)
         else:
-            image = self.null_image.clone()
+            image     = self.null_image.clone()
             has_image = torch.tensor(0.0)
 
-        # ---- text --------------------------------------------------------
-        question = sample["question"]
-        choices  = sample["choices"]          # list[str], length 2–5
-        n_valid  = len(choices)
+        question = str(row["question"])
+        choices  = _parse_choices(row["choices"])
+        hint     = str(row["hint"])    if row.get("hint")    else ""
+        lecture  = str(row["lecture"]) if row.get("lecture") else ""
 
-        # Format: the model scores each (question, choice) pair independently.
-        # Padding choices are empty strings; they are masked out during scoring.
-        texts = [f"Question: {question} Choice: {c}" for c in choices]
+        texts = [
+            _build_text(question, c, hint, lecture,
+                        self.config.use_hint, self.config.use_lecture)
+            for c in choices
+        ]
         while len(texts) < self.config.max_choices:
             texts.append("")
 
@@ -89,19 +119,17 @@ class ScienceQADataset(Dataset):
         )
 
         choice_mask = torch.zeros(self.config.max_choices)
-        choice_mask[:n_valid] = 1.0
+        choice_mask[:len(choices)] = 1.0
 
-        # task_id: ScienceQA uses field "pid" (problem id); fall back to index
-        task_id = sample.get("pid", idx)
-        if isinstance(task_id, str):
-            task_id = int(task_id)
-
-        return {
-            "image":          image,                        # [3, H, W]
-            "has_image":      has_image,                    # scalar
-            "input_ids":      enc["input_ids"],             # [max_choices, seq_len]
-            "attention_mask": enc["attention_mask"],        # [max_choices, seq_len]
-            "choice_mask":    choice_mask,                  # [max_choices]
-            "answer":         torch.tensor(sample["answer"], dtype=torch.long),
-            "task_id":        task_id,
+        item = {
+            "image":          image,
+            "has_image":      has_image,
+            "input_ids":      enc["input_ids"],
+            "attention_mask": enc["attention_mask"],
+            "choice_mask":    choice_mask,
+            "task_id":        idx,
+            "subject":        str(row.get("subject", "unknown")),
         }
+        if self._has_answer:
+            item["answer"] = torch.tensor(int(row["answer"]), dtype=torch.long)
+        return item
