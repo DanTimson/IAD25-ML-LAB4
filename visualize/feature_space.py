@@ -64,11 +64,17 @@ def cosine_analysis(visual_embs, text_embs, n_samples=1000, save_path=None):
                            min(n_samples, len(visual_embs)), replace=False)
     v, t = visual_embs[idx], text_embs[idx]
 
-    paired_sims   = np.array([float(sk_cosine(v[i:i+1], t[i:i+1]))
-                               for i in range(len(idx))])
-    shuf          = np.random.permutation(len(idx))
-    unpaired_sims = np.array([float(sk_cosine(v[i:i+1], t[shuf[i]:shuf[i]+1]))
-                               for i in range(len(idx))])
+    paired_sims = np.array([
+        sk_cosine(v[i:i+1], t[i:i+1])[0, 0]
+        for i in range(len(idx))
+    ], dtype=float)
+
+    shuf = np.random.permutation(len(idx))
+
+    unpaired_sims = np.array([
+        sk_cosine(v[i:i+1], t[shuf[i]:shuf[i]+1])[0, 0]
+        for i in range(len(idx))
+    ], dtype=float)
 
     stats = {
         "paired_mean":   float(np.mean(paired_sims)),
